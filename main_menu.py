@@ -1,25 +1,19 @@
 import pygame
 import sys
 import os
-import math
 
 pygame.init()
 
-# ========== KONSTANSOK ==========
+# ========== ALAP BEÁLLÍTÁSOK ==========
 
-SCREEN_WIDTH = 1200
-SCREEN_HEIGHT = 800
+SCREEN_WIDTH = 1300
+SCREEN_HEIGHT = 900
+UI_HEIGHT = 140  # Megnövelt magasság, hogy 2 sor gomb is elférjen
 
-UI_HEIGHT = 100                   # Felső UI sáv magassága
-TOOLTIP_BG_COLOR = (250, 250, 210)  # Tooltip háttér (világos sárga)
-TOOLTIP_TEXT_COLOR = (50, 50, 50)
-TOOLTIP_FONT_SIZE = 16
-
-# Színek
-WHITE = (255, 255, 255)
 LIGHT_GRAY = (220, 220, 220)
 GRAY = (180, 180, 180)
 DARK_GRAY = (100, 100, 100)
+WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
@@ -27,93 +21,98 @@ BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 ORANGE = (255, 128, 0)
 PURPLE = (128, 0, 128)
+LOGO_COLOR = (0, 150, 200)  # PaintMEZ logó színe
 
-# Egy egyszerű, előre definiált paletta
-DEFAULT_PALETTE = [
-    RED, GREEN, BLUE, BLACK, YELLOW, ORANGE, PURPLE, WHITE
-]
-
-# ========== ABLAK/RAJZFELÜLET ==========
+DEFAULT_PALETTE = [RED, GREEN, BLUE, BLACK, YELLOW, ORANGE, PURPLE, WHITE]
 
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Professzionális Rajzolóprogram - PyGame")
-
-# A tényleges rajzfelület (vászon) a felső UI alatt kezdődik
-drawing_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT - UI_HEIGHT))
-drawing_surface.fill(WHITE)
+pygame.display.set_caption("Többrétegű Rajz - Háttérszín választással, PaintMEZ logóval")
 
 clock = pygame.time.Clock()
 
-# ========== ÁLLAPOT VÁLTOZÓK ==========
+# ========== RAJZ-FUNKCIÓKHOZ TARTOZÓ ÁLLAPOT ==========
 
-current_tool = 'rect'  # 'rect', 'ellipse', 'line', 'eraser'
+current_tool = 'rect'   # 'rect', 'ellipse', 'line', 'eraser'
 current_color = BLACK
-fill_shapes = True    # True => kitöltött, False => csak körvonal
+fill_shapes = True
 brush_thickness = 3
-
-shapes = []           # A rajzolt elemek listája (visszavonáshoz, újrarajzoláshoz)
-redo_stack = []       # Az Undo műveletek elemei kerülnek ide
 
 mouse_is_down = False
 start_pos = (0, 0)
 line_points = []
 
-# Tooltip kezelés
-tooltip_text = None
-tooltip_rect = None
+# ========== TÖBB RÉTEG KEZELÉSE (Marad a korábbi logika) ==========
 
-# Súgó (help) overlay mutatása
-show_help_overlay = False
+class Layer:
+    def __init__(self, name="Layer", background_color=None):
+        self.name = name
+        self.background_color = background_color
+        self.shapes = []
+        self.redo_stack = []
+        self.visible = True
 
-# ========== HASZNOS FÜGGVÉNYEK ==========
+layers = [
+    Layer(name="Base Layer", background_color=WHITE)
+]
+current_layer_index = 0
 
-def redraw_canvas():
-    """
-    shapes listát végigjárva újrarajzol mindent a drawing_surface-re.
-    """
-    drawing_surface.fill(WHITE)
-    for item in shapes:
-        draw_shape_item(item)
+def get_current_layer():
+    return layers[current_layer_index]
 
-def draw_shape_item(item):
-    stype = item['type']
-    col = item.get('color', BLACK)
-    th = item.get('thickness', 1)
-    fill = item.get('fill', True)
+def add_layer():
+    new_layer = Layer(name=f"Layer {len(layers)}", background_color=None)
+    layers.append(new_layer)
+    print(f"Új réteg: {new_layer.name}")
 
-    if stype in ('rect', 'ellipse'):
-        (sx, sy) = item['start']
-        (ex, ey) = item['end']
-        left = min(sx, ex)
-        top = min(sy, ey)
-        width = abs(sx - ex)
-        height = abs(sy - ey)
-        if stype == 'rect':
-            if fill:
-                pygame.draw.rect(drawing_surface, col, (left, top, width, height))
-            else:
-                pygame.draw.rect(drawing_surface, col, (left, top, width, height), th)
-        else:  # ellipse
-            if fill:
-                pygame.draw.ellipse(drawing_surface, col, (left, top, width, height))
-            else:
-                pygame.draw.ellipse(drawing_surface, col, (left, top, width, height), th)
+def remove_layer():
+    global current_layer_index
+    if len(layers) > 1:
+        removed = layers.pop(current_layer_index)
+        print(f"Réteg törölve: {removed.name}")
+        current_layer_index = max(0, current_layer_index - 1)
+    else:
+        print("Nem törölhető az utolsó réteg.")
 
-    elif stype == 'line':
-        points = item['points']
-        if len(points) > 1:
-            pygame.draw.lines(drawing_surface, col, False, points, th)
+def next_layer():
+    global current_layer_index
+    current_layer_index = (current_layer_index + 1) % len(layers)
+    print(f"Aktív réteg: {layers[current_layer_index].name}")
 
-    elif stype == 'eraser':
-        points = item['points']
-        # Radír => fehér rajzolás
-        if len(points) > 1:
-            pygame.draw.lines(drawing_surface, WHITE, False, points, th)
+def previous_layer():
+    global current_layer_index
+    current_layer_index = (current_layer_index - 1) % len(layers)
+    print(f"Aktív réteg: {layers[current_layer_index].name}")
+
+def set_layer_background_color(color):
+    layer = get_current_layer()
+    layer.background_color = color
+    print(f"Réteg háttérszíne: {color} ({layer.name})")
+
+# ========== UNDO/REDO, TÖRLÉS ==========
+
+def layer_undo():
+    layer = get_current_layer()
+    if layer.shapes:
+        layer.redo_stack.append(layer.shapes.pop())
+        print(f"Réteg '{layer.name}' - Undo")
+    else:
+        print("Nincs mit visszavonni.")
+
+def layer_redo():
+    layer = get_current_layer()
+    if layer.redo_stack:
+        layer.shapes.append(layer.redo_stack.pop())
+        print(f"Réteg '{layer.name}' - Redo")
+
+def clear_current_layer():
+    layer = get_current_layer()
+    layer.shapes.clear()
+    layer.redo_stack.clear()
+    print(f"Réteg '{layer.name}' törölve.")
+
+# ========== SHAPES KEZELÉS, RAJZOLÁS EGY RÉTEGRE ==========
 
 def create_shape_data(stype, start=None, end=None, points=None):
-    """
-    Létrehoz egy rajzolási objektumot. Ez megy a shapes listába.
-    """
     if stype in ('rect', 'ellipse'):
         return {
             'type': stype,
@@ -137,71 +136,111 @@ def create_shape_data(stype, start=None, end=None, points=None):
             'thickness': brush_thickness
         }
 
-def undo():
-    if shapes:
-        redo_stack.append(shapes.pop())
-        redraw_canvas()
+def draw_shape_item(surface, item):
+    stype = item['type']
+    if stype == 'loaded_image':
+        loaded_img = item['surface']
+        surface.blit(loaded_img, (0, 0))
+        return
 
-def redo():
-    if redo_stack:
-        shapes.append(redo_stack.pop())
-        redraw_canvas()
+    th = item.get('thickness', 1)
+    if stype in ('rect', 'ellipse'):
+        sx, sy = item['start']
+        ex, ey = item['end']
+        left = min(sx, ex)
+        top = min(sy, ey)
+        width = abs(sx - ex)
+        height = abs(sy - ey)
+        color = item.get('color', BLACK)
+        fill = item.get('fill', True)
 
-def save_drawing(filename="drawing.png"):
-    pygame.image.save(drawing_surface, filename)
+        if stype == 'rect':
+            if fill:
+                pygame.draw.rect(surface, color, (left, top, width, height))
+            else:
+                pygame.draw.rect(surface, color, (left, top, width, height), th)
+        else:  # ellipse
+            if fill:
+                pygame.draw.ellipse(surface, color, (left, top, width, height))
+            else:
+                pygame.draw.ellipse(surface, color, (left, top, width, height), th)
+
+    elif stype == 'line':
+        color = item.get('color', BLACK)
+        points = item['points']
+        if len(points) > 1:
+            pygame.draw.lines(surface, color, False, points, th)
+
+    elif stype == 'eraser':
+        points = item['points']
+        if len(points) > 1:
+            pygame.draw.lines(surface, WHITE, False, points, th)
+
+def redraw_all():
+    final_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT - UI_HEIGHT), pygame.SRCALPHA)
+    for layer in layers:
+        if not layer.visible:
+            continue
+        layer_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT - UI_HEIGHT), pygame.SRCALPHA)
+        if layer.background_color is not None:
+            layer_surf.fill(layer.background_color)
+        for shape in layer.shapes:
+            draw_shape_item(layer_surf, shape)
+        final_surface.blit(layer_surf, (0, 0))
+    return final_surface
+
+# ========== FÁJL MENTÉS / BETÖLTÉS ==========
+
+def save_canvas(filename="multi_layer.png"):
+    final_surf = redraw_all()
+    pygame.image.save(final_surf, filename)
     print(f"Mentve: {filename}")
 
-def load_drawing(filename="drawing.png"):
+def load_canvas(filename="multi_layer.png"):
     if os.path.exists(filename):
         loaded = pygame.image.load(filename)
-        drawing_surface.blit(loaded, (0, 0))
-        print(f"{filename} betöltve!")
+        base_layer = layers[0]
+        base_layer.shapes.clear()
+        base_layer.background_color = None
+        base_layer.shapes.append({'type': 'loaded_image', 'surface': loaded})
+        print(f"Betöltve: {filename}")
     else:
-        print("Nincs mentett fájl a megadott néven.")
+        print("Nincs ilyen fájl.")
 
-def clear_canvas():
-    shapes.clear()
-    redo_stack.clear()
-    drawing_surface.fill(WHITE)
-    print("Vászon törölve (fehér).")
-
-# ========== GUI ELEMEK OSZTÁLYAI ==========
+# ========== GOMB, CSÚSZKA, SZÍN SWATCH OSZTÁLYOK ==========
 
 class Button:
-    """
-    Egyszerű gomb, kattintáskor callback.
-    Támogatja a tooltipet is.
-    """
-    def __init__(self, x, y, w, h, text, callback,
-                 tooltip=None,
-                 font_size=18,
-                 bg_color=GRAY,
-                 hover_color=DARK_GRAY,
-                 text_color=BLACK):
-        self.rect = pygame.Rect(x, y, w, h)
+    def __init__(self, text, callback, tooltip=None, w=100, h=30):
+        """
+        A 'rect' pozícióját majd a layout_buttons_in_rows függvény állítja be.
+        """
         self.text = text
         self.callback = callback
         self.tooltip = tooltip
+        self.w = w
+        self.h = h
+        self.rect = pygame.Rect(0, 0, w, h)
 
-        self.bg_color = bg_color
-        self.hover_color = hover_color
-        self.text_color = text_color
-        self.font = pygame.font.SysFont(None, font_size)
+        self.font = pygame.font.SysFont(None, 18)
+        self.bg_color = GRAY
+        self.hover_color = DARK_GRAY
+        self.text_color = BLACK
 
-    def draw(self, surface):
+    def set_position(self, x, y):
+        self.rect.topleft = (x, y)
+
+    def draw(self, surf):
         mouse_pos = pygame.mouse.get_pos()
+        color = self.bg_color
         if self.rect.collidepoint(mouse_pos):
             color = self.hover_color
             if self.tooltip:
                 show_tooltip(self.tooltip, mouse_pos)
-        else:
-            color = self.bg_color
 
-        pygame.draw.rect(surface, color, self.rect, border_radius=5)
-
-        text_surf = self.font.render(self.text, True, self.text_color)
-        text_rect = text_surf.get_rect(center=self.rect.center)
-        surface.blit(text_surf, text_rect)
+        pygame.draw.rect(surf, color, self.rect, border_radius=4)
+        txt_surf = self.font.render(self.text, True, self.text_color)
+        txt_rect = txt_surf.get_rect(center=self.rect.center)
+        surf.blit(txt_surf, txt_rect)
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -209,44 +248,49 @@ class Button:
                 self.callback()
 
 class ColorSwatch:
-    """
-    Színválasztó négyzet. Ha rákattintanak, beállítja a global current_color-t.
-    Tooltip is lehetséges.
-    """
-    def __init__(self, x, y, color, size=32, tooltip=None):
-        self.rect = pygame.Rect(x, y, size, size)
+    def __init__(self, color, set_bg=False, tooltip=None, size=32):
         self.color = color
+        self.set_bg = set_bg
         self.tooltip = tooltip
+        self.size = size
+        self.rect = pygame.Rect(0, 0, size, size)
 
-    def draw(self, surface):
+    def set_position(self, x, y):
+        self.rect.topleft = (x, y)
+
+    def draw(self, surf):
         mouse_pos = pygame.mouse.get_pos()
-        pygame.draw.rect(surface, self.color, self.rect)
-        # Keret
-        pygame.draw.rect(surface, BLACK, self.rect, 2)
+        pygame.draw.rect(surf, self.color, self.rect)
+        pygame.draw.rect(surf, BLACK, self.rect, 2)
 
-        if self.rect.collidepoint(mouse_pos) and self.tooltip:
+        if self.tooltip and self.rect.collidepoint(mouse_pos):
             show_tooltip(self.tooltip, mouse_pos)
 
     def handle_event(self, event):
         global current_color
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.rect.collidepoint(event.pos):
-                current_color = self.color
-                print(f"Szín beállítva: {current_color}")
+                if self.set_bg:
+                    set_layer_background_color(self.color)
+                else:
+                    current_color = self.color
+                    print(f"Szín beállítva: {current_color}")
 
 class Slider:
-    """
-    Ecsetvastagság állítása.
-    """
-    def __init__(self, x, y, w, h, min_val=1, max_val=20, start_val=3, tooltip=None):
-        self.rect = pygame.Rect(x, y, w, h)
+    def __init__(self, min_val=1, max_val=20, start_val=3, tooltip=None, w=150, h=20):
         self.min_val = min_val
         self.max_val = max_val
         self.value = start_val
+        self.tooltip = tooltip
+        self.w = w
+        self.h = h
+        self.rect = pygame.Rect(0, 0, w, h)
         self.handle_width = 12
         self.dragging = False
-        self.tooltip = tooltip
+        self.update_handle_x()
 
+    def set_position(self, x, y):
+        self.rect.topleft = (x, y)
         self.update_handle_x()
 
     def update_handle_x(self):
@@ -259,26 +303,22 @@ class Slider:
         val = self.min_val + ratio * (self.max_val - self.min_val)
         return int(round(max(self.min_val, min(self.max_val, val))))
 
-    def draw(self, surface):
+    def draw(self, surf):
         mouse_pos = pygame.mouse.get_pos()
-        # Sáv
-        pygame.draw.rect(surface, DARK_GRAY, self.rect)
-        # Fogantyú
-        handle_rect = pygame.Rect(self.handle_x, self.rect.y, self.handle_width, self.rect.h)
-        pygame.draw.rect(surface, GRAY, handle_rect)
+        pygame.draw.rect(surf, DARK_GRAY, self.rect)
+        handle_rect = pygame.Rect(self.handle_x, self.rect.y, self.handle_width, self.h)
+        pygame.draw.rect(surf, GRAY, handle_rect)
 
-        # Érték kijelzése
-        font = pygame.font.SysFont(None, 20)
-        text_surf = font.render(str(self.value), True, BLACK)
-        text_rect = text_surf.get_rect(midbottom=(handle_rect.centerx, self.rect.y - 2))
-        surface.blit(text_surf, text_rect)
+        font = pygame.font.SysFont(None, 18)
+        val_surf = font.render(str(self.value), True, BLACK)
+        val_rect = val_surf.get_rect(midbottom=(handle_rect.centerx, self.rect.y - 2))
+        surf.blit(val_surf, val_rect)
 
-        if self.rect.collidepoint(mouse_pos) and self.tooltip:
+        if self.tooltip and self.rect.collidepoint(mouse_pos):
             show_tooltip(self.tooltip, mouse_pos)
 
     def handle_event(self, event):
         global brush_thickness
-
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.rect.collidepoint(event.pos):
                 self.dragging = True
@@ -296,227 +336,251 @@ class Slider:
             self.value = self.value_from_x(self.handle_x)
             brush_thickness = self.value
 
+
 # ========== TOOLTIP MEGOLDÁS ==========
 
-def show_tooltip(text, mouse_pos):
-    """
-    Ezt meghívja a gomb/slider, ha az egér fölé viszik.
-    """
-    global tooltip_text, tooltip_rect
+tooltip_text = None
+tooltip_pos = None
+
+def show_tooltip(text, pos):
+    global tooltip_text, tooltip_pos
     tooltip_text = text
-    tooltip_rect = mouse_pos
+    tooltip_pos = pos
 
-def draw_tooltip(surface):
-    """
-    Kirajzolja az épp aktív tooltipet, ha van.
-    """
-    global tooltip_text, tooltip_rect
-    if tooltip_text and tooltip_rect:
-        font = pygame.font.SysFont(None, TOOLTIP_FONT_SIZE)
-        text_surf = font.render(tooltip_text, True, TOOLTIP_TEXT_COLOR)
-        # Köré húzunk egy kis hátteret
-        padding = 5
-        bg_rect = text_surf.get_rect()
-        bg_rect.topleft = (tooltip_rect[0] + 10, tooltip_rect[1] + 10)
-        bg_rect.inflate_ip(padding * 2, padding * 2)
+def draw_tooltip(surf):
+    global tooltip_text, tooltip_pos
+    if tooltip_text and tooltip_pos:
+        font = pygame.font.SysFont(None, 20)
+        t_surf = font.render(tooltip_text, True, (50, 50, 50))
+        pad = 5
+        bg_rect = t_surf.get_rect()
+        bg_rect.topleft = (tooltip_pos[0] + 10, tooltip_pos[1] + 10)
+        bg_rect.inflate_ip(pad*2, pad*2)
 
-        pygame.draw.rect(surface, TOOLTIP_BG_COLOR, bg_rect)
-        pygame.draw.rect(surface, BLACK, bg_rect, 1)
+        pygame.draw.rect(surf, (255, 255, 210), bg_rect)
+        pygame.draw.rect(surf, BLACK, bg_rect, 1)
+        surf.blit(t_surf, (bg_rect.x+pad, bg_rect.y+pad))
 
-        surface.blit(text_surf, (bg_rect.x + padding, bg_rect.y + padding))
-
-    # Minden frame végén töröljük, hogy ne maradjon a következő ciklusokra
     tooltip_text = None
-    tooltip_rect = None
+    tooltip_pos = None
 
-# ========== SÚGÓ (HELP) OVERLAY ==========
+# ========== SÚGÓ / HELP ==========
 
-def draw_help_overlay(surface):
-    """
-    Egy félig átlátszó fekete rétegre írjunk fehér szöveget, 
-    ami elmagyarázza a használatot.
-    """
+show_help = False
+
+def toggle_help():
+    global show_help
+    show_help = not show_help
+
+def draw_help_overlay(surf):
     overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 180))  # fekete, 180-as alfa
-
-    font = pygame.font.SysFont(None, 28)
+    overlay.fill((0, 0, 0, 160))
+    font = pygame.font.SysFont(None, 26)
     lines = [
-        "SÚGÓ (HELP)",
+        "PaintMEZ - Többrétegű Rajzprogram",
         "",
-        "Eszközök a felső sávban:",
-        "- Téglalap, Ellipszis: kattints és húzd az egérrel.",
-        "- Szabadkézi (line), Radír (eraser): lenyomva folyamatos rajzolás.",
+        "Eszközök, több sorba rendezett gombok fent.",
+        "Rétegek: Új, köv/előző, törlés, Undo/Redo rétegenként.",
+        "Háttérszín: a 'Set BG' swatch-okkal állítható a réteg háttér.",
+        "Mentés / Betöltés: pixelképként, a rétegek szerkesztési adatai nem állnak vissza.",
         "",
-        "Kitöltés / körvonal gomb a kitöltést váltja.",
-        "Undo/Redo: visszavonás / újra.",
-        "Színpaletta: kattintással színt vált.",
-        "Csúszka: ecset/radír vastagság beállítása.",
-        "Törlés: teljes rajz törlése.",
-        "Mentés / Betöltés: a rajz.png fájlba/fájlból.",
-        "",
-        "Kilépés: bezárja a programot.",
-        "",
-        "(Kattints a Help gombra ismét, hogy eltűnjön ez az ablak.)"
+        "Kattints a HELP gombra újra, hogy bezárd a súgót."
     ]
-
-    y_offset = 100
+    y = 100
     for line in lines:
-        text_surf = font.render(line, True, (255, 255, 255))
-        text_rect = text_surf.get_rect(center=(SCREEN_WIDTH // 2, y_offset))
-        overlay.blit(text_surf, text_rect)
-        y_offset += 40
+        s = font.render(line, True, WHITE)
+        r = s.get_rect(center=(SCREEN_WIDTH//2, y))
+        overlay.blit(s, r)
+        y += 40
+    surf.blit(overlay, (0, 0))
 
-    surface.blit(overlay, (0, 0))
-
-# ========== CALLBACK FÜGGVÉNYEK A GOMBOKHOZ ==========
+# ========== CALLBACK FÜGGVÉNYEK ==========
 
 def set_tool_rect():
     global current_tool
     current_tool = 'rect'
-    print("Eszköz: Téglalap")
 
 def set_tool_ellipse():
     global current_tool
     current_tool = 'ellipse'
-    print("Eszköz: Ellipszis")
 
 def set_tool_line():
     global current_tool
     current_tool = 'line'
-    print("Eszköz: Szabadkézi")
 
 def set_tool_eraser():
     global current_tool
     current_tool = 'eraser'
-    print("Eszköz: Radír")
 
 def toggle_fill():
     global fill_shapes
     fill_shapes = not fill_shapes
-    if fill_shapes:
-        print("Alakzatok: kitöltött")
-    else:
-        print("Alakzatok: körvonalas")
 
 def undo_cb():
-    undo()
-    print("Visszavonás (Undo)")
+    layer_undo()
 
 def redo_cb():
-    redo()
-    print("Újra (Redo)")
+    layer_redo()
 
 def clear_cb():
-    clear_canvas()
+    clear_current_layer()
 
 def save_cb():
-    save_drawing("rajz.png")
+    save_canvas("multi_layer.png")
 
 def load_cb():
-    load_drawing("rajz.png")
-
-def toggle_help():
-    global show_help_overlay
-    show_help_overlay = not show_help_overlay
+    load_canvas("multi_layer.png")
 
 def exit_program():
     pygame.quit()
     sys.exit()
 
-# ========== GUI ELEMEK LÉTREHOZÁSA ==========
+# ========== GOMBOK, SWATCHOK, SLIDER LÉTREHOZÁSA ==========
 
 buttons = []
 color_swatches = []
+bg_color_swatches = []
 slider = None
 
 def create_ui():
+    """
+    A gombokat, swatchokat, csúszkát csak listában hozzuk létre.
+    A pozíciókat a layout_buttons_in_rows adja majd meg.
+    """
     global slider
-    button_x = 10
-    button_y = 10
-    button_w = 80
-    button_h = 30
-    spacing = 10
 
-    def add_button(text, callback, tip=None):
-        nonlocal button_x
-        btn = Button(
-            button_x,
-            button_y,
-            button_w,
-            button_h,
-            text,
-            callback,
-            tooltip=tip
-        )
+    # Gombadatok (szöveg, callback, tooltip)
+    button_data = [
+        ("Téglalap", set_tool_rect, "Téglalap rajzolás"),
+        ("Ellipszis", set_tool_ellipse, "Ellipszis rajzolás"),
+        ("Szabadkézi", set_tool_line, "Szabadkézi vonal"),
+        ("Radír", set_tool_eraser, "Radírozás"),
+        ("Kitöltés", toggle_fill, "Kitöltött/körvonalas alakzat"),
+        ("Undo", undo_cb, "Visszavonás (aktuális réteg)"),
+        ("Redo", redo_cb, "Újra (aktuális réteg)"),
+        ("Törlés", clear_cb, "Aktuális réteg törlése"),
+        ("Mentés", save_cb, "Kép mentése"),
+        ("Betöltés", load_cb, "Kép betöltése"),
+        ("Help", toggle_help, "Súgó megjelenítése"),
+        ("Kilépés", exit_program, "Program bezárása"),
+        ("Köv. réteg", next_layer, "Következő réteg"),
+        ("Előző réteg", previous_layer, "Előző réteg"),
+        ("Új réteg", add_layer, "Üres réteg hozzáadása"),
+        ("Réteg törlés", remove_layer, "Aktuális réteg törlése")
+    ]
+
+    # Gombok létrehozása
+    for (txt, cb, tip) in button_data:
+        btn = Button(txt, cb, tip)
         buttons.append(btn)
-        button_x += button_w + spacing
 
-    # Eszközgombok
-    add_button("Téglalap", set_tool_rect, "Téglalap rajzolása")
-    add_button("Ellipszis", set_tool_ellipse, "Ellipszis rajzolása")
-    add_button("Szabadkézi", set_tool_line, "Szabadkézi rajzolás")
-    add_button("Radír", set_tool_eraser, "Radírozás")
+    # Szín swatchok: rajzoláshoz
+    for c in DEFAULT_PALETTE:
+        sw = ColorSwatch(c, set_bg=False, tooltip=f"Szín: {c}")
+        color_swatches.append(sw)
 
-    # Kitöltés
-    add_button("Kitöltés", toggle_fill, "Váltás: kitöltés / körvonal")
+    # Háttérszín swatchok: set_bg=True
+    for c in DEFAULT_PALETTE:
+        sw = ColorSwatch(c, set_bg=True, tooltip=f"Set BG: {c}")
+        bg_color_swatches.append(sw)
 
-    # Undo / Redo
-    add_button("Undo", undo_cb, "Visszavonás")
-    add_button("Redo", redo_cb, "Újra")
-
-    # Törlés / Mentés / Betöltés
-    add_button("Törlés", clear_cb, "Teljes vászon törlése")
-    add_button("Mentés", save_cb, "Kép mentése rajz.png-be")
-    add_button("Betöltés", load_cb, "Kép betöltése rajz.png-ből")
-
-    # Súgó + Kilépés
-    add_button("Help", toggle_help, "Súgó megjelenítése")
-    add_button("Kilépés", exit_program, "Program bezárása")
-
-    # Színpaletta
-    pal_x = button_x + 20
-    pal_y = 10
-    for col in DEFAULT_PALETTE:
-        cw = ColorSwatch(pal_x, pal_y, col, size=30, tooltip=f"Szín: {col}")
-        color_swatches.append(cw)
-        pal_x += 35
-
-    # Csúszka (ecsetvastagság)
-    slider_x = pal_x + 20
-    slider_y = 15
-    slider_w = 150
-    slider_h = 20
-    slider = Slider(slider_x, slider_y, slider_w, slider_h,
-                    min_val=1, max_val=30, start_val=3,
-                    tooltip="Ecset-/radírvastagság")
+    # Csúszka
+    slider = Slider(min_val=1, max_val=30, start_val=3, tooltip="Ecset/radír vastagság")
     return slider
 
 slider = create_ui()
 
-# ========== FŐ CIKLUS ==========
+
+def layout_buttons_in_rows():
+    """
+    Elhelyezi a gombokat, színnégyzeteket, csúszkát több sorban,
+    figyelembe véve a SCREEN_WIDTH korlátját.
+    A logó miatt a bal oldalon fenntartunk egy sávot.
+    """
+    # Logó bal oldalon: kb. 180 pixel széles helyet hagyunk
+    x = 200
+    y = 10
+    spacing = 10
+    row_height = 40
+    max_width = SCREEN_WIDTH - 10
+
+    # Először a gombokat
+    for btn in buttons:
+        w = btn.w
+        h = btn.h
+        # Ha nem fér ki a sorba, új sor
+        if x + w + spacing > max_width:
+            x = 200  # vissza balra
+            y += row_height + spacing  # új sor
+
+        btn.set_position(x, y)
+        x += (w + spacing)
+
+    # Miután a gombok véget értek, új sort kezdünk a swatch-oknak
+    x = 200
+    y += row_height + spacing
+
+    # Szín swatchok
+    for sw in color_swatches:
+        size = sw.size
+        if x + size + spacing > max_width:
+            x = 200
+            y += size + spacing
+        sw.set_position(x, y)
+        x += (size + spacing)
+
+    # Kicsi eltolás a "Set BG" swatch-oknak
+    x += 30
+
+    for sw in bg_color_swatches:
+        size = sw.size
+        if x + size + spacing > max_width:
+            x = 200
+            y += size + spacing
+        sw.set_position(x, y)
+        x += (size + spacing)
+
+    # Végül a csúszka
+    x += 20
+    slider.set_position(x, y + 5)
+
+# ========== FŐPROGRAM ==========
+
+def draw_logo(surface):
+    """
+    Egyszerű "PaintMEZ" logó a bal felső sarokban.
+    """
+    font = pygame.font.SysFont(None, 48, bold=True)
+    text = "PaintMEZ"
+    text_surf = font.render(text, True, LOGO_COLOR)
+    text_rect = text_surf.get_rect(topleft=(10, 10))
+    surface.blit(text_surf, text_rect)
+
 
 running = True
+layout_buttons_in_rows()  # beállítjuk a gombok pozícióit
 
 while running:
-    mouse_pos = pygame.mouse.get_pos()
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
-        # Gombok, színválasztó, slider kezelése
+        # Gombok, swatchok, slider eseménykezelés
         for b in buttons:
             b.handle_event(event)
-        for c in color_swatches:
-            c.handle_event(event)
+        for sw in color_swatches:
+            sw.handle_event(event)
+        for sw in bg_color_swatches:
+            sw.handle_event(event)
         slider.handle_event(event)
 
-        # Egér a rajzfelületen
+        # Rajzterület
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if event.pos[1] > UI_HEIGHT:  # A UI alatti területre kattint
+            if event.pos[1] > UI_HEIGHT:
                 mouse_is_down = True
-                redo_stack.clear()  # új alakzat => redo törlődik
+                layer = get_current_layer()
+                layer.redo_stack.clear()
 
-                # Rögzítjük a kezdőpontot
                 if current_tool in ('rect', 'ellipse'):
                     start_pos = (event.pos[0], event.pos[1] - UI_HEIGHT)
                 elif current_tool in ('line', 'eraser'):
@@ -525,64 +589,85 @@ while running:
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             if mouse_is_down:
                 mouse_is_down = False
-                # Befejezzük az alakzatot / vonalat
+                layer = get_current_layer()
                 if current_tool in ('rect', 'ellipse'):
                     end_pos = (event.pos[0], event.pos[1] - UI_HEIGHT)
                     shape_data = create_shape_data(current_tool, start=start_pos, end=end_pos)
-                    shapes.append(shape_data)
-                    draw_shape_item(shape_data)
-
+                    layer.shapes.append(shape_data)
                 elif current_tool in ('line', 'eraser'):
                     if len(line_points) > 1:
                         shape_data = create_shape_data(current_tool, points=line_points)
-                        shapes.append(shape_data)
+                        layer.shapes.append(shape_data)
                 line_points = []
 
         elif event.type == pygame.MOUSEMOTION:
             if mouse_is_down and event.pos[1] > UI_HEIGHT:
                 if current_tool in ('line', 'eraser'):
                     line_points.append((event.pos[0], event.pos[1] - UI_HEIGHT))
+                    # valós idejű rajzolás
+                    final_surf = redraw_all()
                     if len(line_points) > 1:
-                        # Rajzolás valós időben
                         if current_tool == 'line':
-                            pygame.draw.line(drawing_surface, current_color,
-                                             line_points[-2], line_points[-1],
-                                             brush_thickness)
+                            pygame.draw.line(final_surf, current_color,
+                                             line_points[-2], line_points[-1], brush_thickness)
                         else:
-                            pygame.draw.line(drawing_surface, WHITE,
-                                             line_points[-2], line_points[-1],
-                                             brush_thickness)
+                            pygame.draw.line(final_surf, WHITE,
+                                             line_points[-2], line_points[-1], brush_thickness)
+                    # UI kirajzolása:
+                    screen.fill(LIGHT_GRAY, (0, 0, SCREEN_WIDTH, UI_HEIGHT))
+                    draw_logo(screen)
+                    for b in buttons:
+                        b.draw(screen)
+                    for sw in color_swatches:
+                        sw.draw(screen)
+                    for sw in bg_color_swatches:
+                        sw.draw(screen)
+                    slider.draw(screen)
 
-    # ========== KÉPERNYŐ KIRAJZOLÁS ==========
+                    screen.blit(final_surf, (0, UI_HEIGHT))
+                    if show_help:
+                        draw_help_overlay(screen)
+                    draw_tooltip(screen)
+                    pygame.display.flip()
 
-    # 1. Felső sáv
+
+    # ========== Minden frame végleges rajzolása ==========
+
+    final_surf = redraw_all()
+
+    # 1) UI háttér
     screen.fill(LIGHT_GRAY, (0, 0, SCREEN_WIDTH, UI_HEIGHT))
 
-    # 2. Gombok, csúszka, színnégyzetek
+    # 2) Logó
+    draw_logo(screen)
+
+    # 3) Gombok, swatchok, slider
     for b in buttons:
         b.draw(screen)
-    for c in color_swatches:
-        c.draw(screen)
+    for sw in color_swatches:
+        sw.draw(screen)
+    for sw in bg_color_swatches:
+        sw.draw(screen)
     slider.draw(screen)
 
-    # 3. Rajzfelület
-    screen.blit(drawing_surface, (0, UI_HEIGHT))
+    # 4) Réteges rajz kirajzolása
+    screen.blit(final_surf, (0, UI_HEIGHT))
 
-    # 4. Előnézet (téglalap, ellipszis húzásnál)
+    # 5) Előnézet (téglalap, ellipszis)
     if mouse_is_down and current_tool in ('rect', 'ellipse'):
-        preview_surf = drawing_surface.copy()
         mx, my = pygame.mouse.get_pos()
         if my > UI_HEIGHT:
+            preview_surf = final_surf.copy()
             end_pos = (mx, my - UI_HEIGHT)
-            temp_data = create_shape_data(current_tool, start=start_pos, end=end_pos)
-            draw_shape_item(temp_data)
+            shape_data = create_shape_data(current_tool, start=start_pos, end=end_pos)
+            draw_shape_item(preview_surf, shape_data)
             screen.blit(preview_surf, (0, UI_HEIGHT))
 
-    # 5. Súgó overlay
-    if show_help_overlay:
+    # 6) Súgó overlay
+    if show_help:
         draw_help_overlay(screen)
 
-    # 6. Tooltip (ha van)
+    # 7) Tooltip
     draw_tooltip(screen)
 
     pygame.display.flip()
